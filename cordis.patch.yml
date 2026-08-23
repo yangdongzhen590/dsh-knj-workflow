@@ -1,0 +1,18 @@
+# dsh-knj-workflow bundle patch
+#
+# Installed via:  dsh plugin --profile web add ./dsh-knj-workflow-0.1.0.tgz
+# This layer inserts the plugin row into the profile's cordis tree,
+# and re-enables the workflow engine rows that dsh-web-app disables
+# (workflow-worker-thread + tool-workflow), because this plugin drives
+# ctx.workflowEngine programmatically.
+# `dataRoot` and `httpPrefix` may be overridden by the user's profile
+# cordis.patch.yml (same id, later layer wins).
+- id: workflow-worker-thread
+  disabled: false
+- id: tool-workflow
+  disabled: false
+- insert:
+    - id: knj-workflow
+      name: dsh-knj-workflow
+      config:
+        httpPrefix: /devtask
