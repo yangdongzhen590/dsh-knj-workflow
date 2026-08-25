@@ -42,12 +42,10 @@
 ## 安装
 
 ```sh
-# 在插件目录打包
-pnpm pack                     # 生成 dsh-knj-workflow-0.1.0.tgz
-
-# 安装到 dsh web profile（重启 dsh web 生效）
-dsh plugin --profile web add ./dsh-knj-workflow-0.1.0.tgz
+dsh plugin --profile web add dsh-knj-workflow
 ```
+
+> npm 包 [`dsh-knj-workflow`](https://www.npmjs.com/package/dsh-knj-workflow)；安装后重启 dsh web 生效。
 
 配置（可选，在 profile 的 `cordis.patch.yml` 中按 id `knj-workflow` 覆盖）：
 
