@@ -1,6 +1,6 @@
 {
   "name": "dsh-knj-workflow",
-  "version": "2026.8.251",
+  "version": "2026.9.10",
   "description": "KNJ 开发任务编排插件：配置驱动的工作流 + 开发任务管理 + 可视化阶段进度（DeepSeek Harness）",
   "author": "knj",
   "license": "MIT",
