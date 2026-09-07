@@ -7,10 +7,12 @@
 ## 功能
 
 - **工作流管理**：可新增 N 个工作流，每个工作流由多个阶段组成；阶段行为由 `prompt`（提示词）+ 可选 `skill` 定义
+- **模板导入/导出**：工作流列表与图编辑器均支持把模板导出为 `.workflow.json` 文件、从文件导入（跨机器移植）；导入后先进入编辑器检查再保存，同 ID 冲突会提示
 - **开发任务**：创建任务并绑定工作流，自动启动执行
 - **可视化进度**：右侧栏「开发任务」tab 横向步骤条展示每个阶段状态（待执行/运行中/完成/失败），实时刷新
 - **阶段重跑 / 继续**：失败的阶段可点击「重跑」，暂停/失败的任务可点击「继续」——基于断点持久化（每阶段结果落盘）
 - **斜杠命令**：`/dev-task new <标题>`、`/dev-task list`、`/dev-task status <id>`、`/dev-task wf`
+- **定时调度集成（可选）**：为 `dsh-scheduler` 提供进程内 `knjWorkflowScheduler` 服务；定时触发时按最新保存的流程定义创建并启动任务，历史可直达该任务详情
 - **UI 融入原生**：左侧栏底部「新建任务」入口 + 右侧栏两个 tab（better-sidebar 扩展点），全部使用 DSH 原生设计令牌（`--dsw-*`）
 
 ## 架构
@@ -45,7 +47,7 @@
 dsh plugin --profile web add dsh-knj-workflow
 ```
 
-> npm 包 [`dsh-knj-workflow`](https://www.npmjs.com/package/dsh-knj-workflow)；安装后重启 dsh web 生效。
+> npm 包 [`dsh-knj-workflow`](https://www.npmjs.com/package/dsh-knj-workflow)；安装后重启 dsh web 生效。`dsh-scheduler` 可独立安装；同时安装本插件后，调度器才会显示「KNJ 工作流」任务类型。
 
 配置（可选，在 profile 的 `cordis.patch.yml` 中按 id `knj-workflow` 覆盖）：
 
