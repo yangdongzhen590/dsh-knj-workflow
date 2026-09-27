@@ -1,0 +1,37 @@
+# Normalize all text files to LF, in the index *and* in the working tree.
+#
+# Why: this repository is a DSH plugin published straight from the worktree.
+# The host has core.autocrlf=true, so without this file Git checked text files
+# out as CRLF while npm packed them as LF. Every worktree file then differed
+# from the installed/published copy by one byte per line (e.g. lib/index.js:
+# 8589 CRLF vs 8475 LF), so worktree hashes could never be compared against an
+# installed package. Pinning eol=lf keeps the two byte-identical.
+* text=auto eol=lf
+
+# Windows batch/PowerShell scripts must keep CRLF to run reliably on cmd.exe.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Explicitly textual types (defensive: keep LF even if detection is unsure).
+*.js   text eol=lf
+*.mjs  text eol=lf
+*.cjs  text eol=lf
+*.json text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+
+# Binary assets must never be normalized. *.tgz is gitignored, but pinned here
+# as well so release archives can never be corrupted by an EOL rewrite.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.zip  binary
+*.gz   binary
+*.tgz  binary
+*.pdf  binary

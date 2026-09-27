@@ -1,0 +1,17 @@
+node_modules/
+*.tgz
+release/
+target/
+.DS_Store
+
+# JetBrains IDE state
+.idea/
+
+# DSH edit-review session artifacts, written into the workspace root by the
+# harness while editing (the plain file plus its rotated/archived variants).
+# Session state, not repository content.
+.dsh-edit-review.json
+.dsh-edit-review-*.json
+
+# local wiki scaffold (session knowledge, not plugin content)
+.wiki/
