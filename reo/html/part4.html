@@ -1,0 +1,344 @@
+
+<section id="s-03">
+  <div class="sec-head">
+    <div class="sec-num">03</div>
+    <div>
+      <h2>功能：逐个拆实现</h2>
+      <p class="sec-sub">12 个功能，每个都回答四个问题：用户看到什么、数据怎么流、关键代码怎么写的、哪里埋了坑。行号可直接跳到源码。</p>
+    </div>
+  </div>
+
+  <article class="feat">
+    <header>
+      <span class="fid">F01</span>
+      <div>
+        <h3>工作流图模型与静态校验</h3>
+        <p class="fmeta"><span class="tag">graph.js</span><span class="tag">validateWorkflow</span> 纯函数、无 IO、Host 与测试共用</p>
+      </div>
+    </header>
+    <div class="feat-body">
+      <div class="row"><div class="rk">数据结构</div><div class="rv">
+        <p>一张图 = <code>{id,name,description?,schemaVersion:2,revision,inputs[],nodes[],edges[]}</code>。<b>6 种节点</b>：<code>start | end | task | gateway-xor | gateway-and | human</code>。<b>边</b>可带条件 <code>when:{field,op:'eq'|'neq'|'in',value}</code> 与 <code>default:true</code> 兜底。</p>
+        <p><code>task.body = {prompt,mode:'single'|'parallel',parallelItems?,output?:JSONSchema}</code>；<code>human.routes = [{label,to,tone?}]</code>（兼容旧 <code>approveTo/rejectTo</code>，自动推导为「通过/驳回」）。</p>
+      </div></div>
+      <div class="row"><div class="rk">校验</div><div class="rv">
+        <p><code>validateWorkflow</code>（<code>graph.js:124-247</code>）12 类检查，最狠的四条：</p>
+        <ul>
+          <li><b>start/end 各恰一个</b>；节点 id 唯一、type 必须在白名单</li>
+          <li><b>孤立节点</b>：除 start 外入度必须 &gt;0 —— 但 <code>human.routes</code> 被当作<b>虚拟边</b>计入度数（<code>topoEdges</code>），否则「驳回→修复」的回环会被误判孤立</li>
+          <li><b>XOR 必须有多出边 + default + 非 default 边必须带 when</b>；task 多出边同理（否则是永远命不中的死边）</li>
+          <li><b>human 不得出现在并行分支内</b>：用 <code>branchNodes</code> 分析 split→join 区间，含虚拟边（否则并行分片里的审批会静默吞掉）</li>
+        </ul>
+        <p>保存时 <code>prepareWorkflowForSave</code>（<code>:374</code>）通过校验后<b>原地规范化</b> inputs、写 <code>schemaVersion:2</code>、<code>revision = existing.revision+1</code>。<code>orderTaskNodesByFlow</code>（<code>:397</code>）从 start BFS（真实边 + 虚拟边）只收 task 节点 → 决定进度条顺序。</p>
+      </div></div>
+      <div class="row"><div class="rk">刻意不做</div><div class="rv">
+        <p><b>不检查可达性</b>（只查入度，不查能否走到 end）、<b>不做环检测</b>（驳回回环合法）、不校验 prompt 非空 / JSON Schema 合法性 / maxRuns 范围 / displayFrom。这些全部留到<b>运行期</b>由编排器抛错。</p>
+        <p>输入参数名黑名单 <code>/[\s.\\/:*?"&lt;&gt;|]/</code>（<code>graph.js:26</code>），<b>点号必须拒</b>——<code>${inputs.a.b}</code> 按 <code>.</code> 逐段取值会永远取不到，注释写明了这个原因。</p>
+      </div></div>
+      <div class="row"><div class="rk">坑</div><div class="rv">
+        <p><span class="ev ev-run">运行证据</span> 实跑 <code>repro-zero-outedge.mjs</code>：task 节点<b>零出边</b>时编排器会抛「流程在此断头」，但 <code>validateWorkflow</code> 仍返回 <code>{ok:true}</code>。坏图能存进库，只在跑的时候炸 —— 这是「半修」状态。</p>
+      </div></div>
+    </div>
+  </article>
+
+  <article class="feat">
+    <header>
+      <span class="fid">F02</span>
+      <div>
+        <h3>画布编辑器：1,393 行的单组件怎么画出可交互的图</h3>
+        <p class="fmeta"><span class="tag">client.js</span> <code>class GraphEditor</code> 1004-2396 · 占全文件 32%</p>
+      </div>
+    </header>
+    <div class="feat-body">
+      <div class="row"><div class="rk">渲染</div><div class="rv">
+        <p><b>自研 inline SVG，没有 canvas、没有图库、没有 JSX</b>（全文件 784 处 <code>react.createElement</code>）。<code>renderSvg()</code>（<code>1857-1881</code>）画：网格背景（CSS 双层 linear-gradient）+ 节点 + 边 + 连线预览。</p>
+        <p>节点几何按类型写死：任务/人工<b>矩形 120×44</b>、网关<b>菱形半对角 30</b>、起止<b>胶囊 60×36</b>；端口是节点右侧蓝点，<code>end</code> 无出端口。箭头用 <code>&lt;defs&gt;&lt;marker&gt;</code>（5 色）+ <b>手工三角兜底</b>（注释：绕开 marker 渲染可靠性问题）。</p>
+      </div></div>
+      <div class="row"><div class="rk">连线路由</div><div class="rv">
+        <p>7 个几何函数构成一套正交+样条混合路由：<code>incomingPortSlot</code>（同目标多入边分配槽位）→ <code>flowPorts</code>（按相对角度选边，±12px 散布）→ <code>flowObstacles</code>（把其它节点当障碍）→ <code>routeEdgeKnee</code>（直通 / 竖列 3 段避卡 / V-H-V 上下包抄 ±60..150 / 兜底中线）→ <code>smoothCurvePath</code>（Catmull-Rom 转三次贝塞尔）→ <code>routeEdge</code>（先 21 点采样判断直连是否撞卡，再决定直线还是样条）。</p>
+        <p>这套算法在 Host 的 <code>graph.js:498-638</code> 有一份<b>镜像实现</b>，两边注释都写着「两处需同步修改」。</p>
+      </div></div>
+      <div class="row"><div class="rk">交互</div><div class="rv">
+        <ul>
+          <li><b>拖节点</b>：<code>startDrag</code> 记偏移 → move 时 <code>patchNode(..., record=false)</code> 不入历史 → up 时统一 <code>pushNow</code> 入栈（<b>拖拽坐标不逐帧进 undo</b>）</li>
+          <li><b>拖线</b>：端口 mousedown + <code>stopPropagation</code> → move 时用 70×42 命中框找目标 → up 时写入边；虚线实时预览</li>
+          <li><b>缩放/平移</b>：滚轮平移（<code>scrollLeft/Top</code>）、缩放 0.5–2.0、<code>home()</code> 复位；所有命中判定都先过 <code>canvasPoint()</code>（同时处理 <code>getBoundingClientRect</code> + 滚动 + zoom）</li>
+          <li><b>环边判定</b>：<code>isUpstream(a,b)</code> DFS，成环的边画<b>红色虚线</b>警示</li>
+        </ul>
+      </div></div>
+      <div class="row"><div class="rk">撤销栈</div><div class="rv">
+        <p>快照式历史（JSON 深拷贝），<b>上限 101</b>；<code>pushHistory</code> 与栈顶相同则去重；<code>scheduleCommit</code> 对文本输入做 <b>600ms 防抖</b>合并为一步；<code>flushPending</code> 保证撤销/保存前顺序正确。<code>Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z</code>，焦点在输入框时不拦截。保存成功 / 导入成功 → <b>重建基线</b>（<code>hours=[]</code>、redo 清空）。</p>
+      </div></div>
+      <div class="row"><div class="rk">坑</div><div class="rv">
+        <p>①「输入参数声明」面板走 <code>setWf</code>，<b>不进 undo</b>（注释明说「名称/ID 元数据不进 undo」）→ 改输入参数按 Ctrl+Z 没反应；②<code>assistChanged</code> 高亮在保存成功后<b>不清空</b>，只有新对话或撤销才清 → 绿色高亮残留；③ 硬编码浅色底 6 处，暗色主题下失效。</p>
+      </div></div>
+    </div>
+  </article>
+
+  <article class="feat">
+    <header>
+      <span class="fid">F03</span>
+      <div>
+        <h3>AI 对话改流程：把黑盒 subagent 包装成「实时过程流 + 整轮撤销」</h3>
+        <p class="fmeta"><span class="tag">index.js</span> <code>runAssist/startAssist/_startAssistStream</code> 601-1074 · <span class="tag">client.js</span> 对话坞 1405-1472</p>
+      </div>
+    </header>
+    <div class="feat-body">
+      <div class="row"><div class="rk">两段式</div><div class="rv">
+        <p><b>发起</b>：<code>POST /assist {workflow, message, history}</code> → <b>202</b> <code>{requestId}</code>（异步，不阻塞 HTTP）。<b>过程</b>：客户端每 <b>700ms</b> 拉 <code>GET /assist/progress?id=&amp;since=&lt;lastSeq&gt;</code>，按 <code>seq</code> 游标<b>增量</b>追加，拿到 <code>done</code> 才收。</p>
+        <p>为什么不是 SSE/WS：宿主插件只注册了 prefix HTTP 路由，长连接在 cordis 生命周期里更难清理；轮询 + 游标是这个规模下最省事的选择。</p>
+      </div></div>
+      <div class="row"><div class="rk">Host 侧</div><div class="rv">
+        <p><code>runAssist</code> → 建 prompt（<code>summarizeWorkflow</code> 图摘要 + <code>ASSIST_RULES</code> 12 节规范 + 最近 8 条历史）→ 读 <code>assist-script.js</code> 源码 → <code>engine.start</code> → 等 <code>run.result</code> → <b><code>applyEdits(workflow, edits)</code></b>。</p>
+        <p><b>Host 是唯一的写图权威</b>：客户端把 <code>before</code> 整图发过去，收到的是<b>已校验完的最终图</b> + <code>applied[]</code>（生效）+ <code>rejected[{action,reason}]</code>（被拒+原因）。客户端不做逐条回放。</p>
+      </div></div>
+      <div class="row"><div class="rk">动作引擎</div><div class="rv">
+        <p>8 种动作 <code>add_node/set_node/remove_node/add_edge/set_edge/remove_edge/set_routes/set_meta</code>，三层防护：</p>
+        <ul>
+          <li><b>动作级语义预检</b>（<code>assist-edits.js:74-162</code>）：禁删 start/end；<code>set_node</code> 字段白名单（<b>禁写 x/y/id</b>——布局归客户端，AI 不许碰）；禁自环/重复边；<code>set_routes</code> 仅 human 且 label 唯一</li>
+          <li><b>应用</b>：全部 clone 后返回新对象（原图深度不可变）</li>
+          <li><b>整批终检</b>：<code>validateWorkflow</code> 不过 → <b>整批回滚</b>（返回原图、<code>applied=[]</code>）</li>
+        </ul>
+        <p>被拒动作不阻断后续动作（逐条 reject 而非整轮失败）。</p>
+      </div></div>
+      <div class="row"><div class="rk">最巧一手</div><div class="rv">
+        <p>AI 脚本用 <b>schema 输出</b>，模型因此<b>不产生普通 text 块</b>，正文藏在 <code>structured_output</code> 工具的参数增量里。Host 从 tool-call 增量 args 里用正则截 <code>"reply":"…"</code> 的<b>未闭合 JSON 字符串前缀</b>，再用容错解码器（尾部不完整转义直接丢弃）还原 → 把结构化输出「伪装」成流式正文（<code>index.js:862-898</code>）。这就是对话坞里那个逐字输出的正文效果。</p>
+      </div></div>
+      <div class="row"><div class="rk">过程流采集</div><div class="rv">
+        <p>三级数据源回退：<code>readSession(childId).events</code> → <code>readSurface(childId).events</code> → <code>listEvents(childId)</code>；同时挂 <code>ctx.on('session/event')</code> 做实时。注释给出实测依据：<b>「读持久化日志前 162s 无数据、172s 一次性到 1878 条（按批 flush），所以实时性必须来自事件通道，轮询仅兜底」</b>。轮询 2s 一次 + <code>done</code> 后补采最后一帧。</p>
+      </div></div>
+      <div class="row"><div class="rk">坑</div><div class="rv">
+        <p><span class="ev ev-run">运行证据</span> 真实 433 次请求里 <b>220 次（51%）</b>降级为「只有阶段级过程」（<code>SESSION_QUERY_SESSION_NOT_FOUND</code> 199 次），而 <b>UI 不告知用户降级</b>。另外 token 用量只在 <code>childId</code> 存在时才渲染——没有 childId 时即使有 usage 也不显示。</p>
+      </div></div>
+    </div>
+  </article>
+
+  <article class="feat">
+    <header>
+      <span class="fid">F04</span>
+      <div>
+        <h3>模板导入导出：跨机器移植一张图</h3>
+        <p class="fmeta"><span class="tag">client.js</span> <code>parseWorkflowFile</code> 189-214 · <code>exportWorkflowFile</code> 169-182</p>
+      </div>
+    </header>
+    <div class="feat-body">
+      <div class="row"><div class="rk">实现</div><div class="rv">
+        <p><b>导出</b>：<code>buildGraph()</code> 规范化 → <code>exportWorkflowFile()</code> → <code>Blob</code> + <code>&lt;a download&gt;</code>，文件名 <code>&lt;id&gt;.workflow.json</code>，1s 后回收 objectURL。</p>
+        <p><b>导入</b>：容错三种形态（裸对象 / <code>{workflow:{}}</code> 包装 / 旧版 <code>stages</code> 数组→明确拒绝并说明）→ 自动补 <code>start</code>/<code>end</code> 节点 → <b>缺坐标用 autoLayout 补齐</b>（否则 SVG 出现 NaN）→ 返回 <code>{ok,wf,conflict,error}</code>。</p>
+      </div></div>
+      <div class="row"><div class="rk">冲突</div><div class="rv"><p>同 ID <b>不阻止</b>导入，toast 提示「保存将覆盖，可先改 ID」；导入后先进编辑器检查，不直接落库。</p></div></div>
+      <div class="row"><div class="rk">坑</div><div class="rv"><p>导入不校验 <code>schemaVersion</code>；如果外部文件带非法节点 type，要到<b>保存时</b>才被 Host 拒绝（导入本身成功）。真实数据里 <code>wf-dev-flow1</code> 就是一次复制产物的证据（与 <code>wf-dev-flow</code> 同构）。</p></div></div>
+    </div>
+  </article>
+
+  <article class="feat">
+    <header>
+      <span class="fid">F05</span>
+      <div>
+        <h3>新建任务：需求可空、标题自动派生、长需求不炸上下文</h3>
+        <p class="fmeta"><span class="tag">index.js</span> <code>POST /tasks</code> 1755-1854 · <span class="tag">requirement.js</span> 86 行 · <span class="tag">client.js</span> <code>NewTaskModal</code> 2505-2927</p>
+      </div>
+    </header>
+    <div class="feat-body">
+      <div class="row"><div class="rk">标题</div><div class="rv">
+        <p>表单<b>没有标题输入框</b>。标题由 Host 派生：<code>deriveTaskTitle(description)</code> = 首条非空行 → 去 markdown <code>#</code> → <b>按码点截 50 个字符</b>（<code>Array.from</code>，不会切坏代理对）；空则 <code>未命名任务 MM-DD HH:mm</code>。标题<b>恒非空</b>，看板/命令平面都依赖这点。</p>
+      </div></div>
+      <div class="row"><div class="rk">长需求</div><div class="rv">
+        <p>三个常量：<code>INLINE_MAX = 8000</code> 字符（按码点）、<code>HEAD_MAX = 6000</code>、文件名 <code>requirement.md</code>。≤8000 全文进 prompt；&gt;8000 则「前 6000 字 + <code>[…… 省略 N 字。完整需求已落盘：&lt;path&gt; …]</code>」，完整全文落盘到 <code>tasks/&lt;id&gt;/requirement.md</code>。</p>
+        <p><b>落盘位置从路由搬到了 <code>startTask</code></b>（<code>spillRequirementBeforeRun</code>）：因为调度器构造 task <b>不走路由</b>，原来放在路由里导致「长需求对节点等于丢失」。改成启动前单点 owner 后，HTTP/调度器/命令/resume/rerun 全入口覆盖，且幂等。</p>
+      </div></div>
+      <div class="row"><div class="rk">请求体</div><div class="rv">
+        <p><code>readBody</code>（<code>index.js:1556-1595</code>）按 <b>Buffer 累积、最后一次性 UTF-8 解码</b>。注释记录事故：旧实现 <code>raw += chunk</code> 每块各自解码，多字节中文跨块被截成 U+FFFD ——「粘贴大段中文需求」正是核心场景，超 ~64KB 必乱码。上限 <code>MAX_BODY_BYTES = 1e7</code>（按字节，因为中文 3 字节/字）。</p>
+        <p>超限时<b>不 <code>req.destroy()</code></b>，改为抽干剩余请求体 —— 否则路由还没写响应，客户端只看到 <code>socket hang up</code>，设计好的 413 永远到不了调用方。</p>
+      </div></div>
+      <div class="row"><div class="rk">执行模型</div><div class="rv">
+        <p>可选 <code>model</code>/<code>provider</code>；下拉数据来自 <code>GET /models</code>，而它<b>不依赖 llm 服务</b>（Host 插件 realm 拿不到），而是手写 YAML 缩进扫描器去读 <code>~/.dsh/settings.yaml</code> 的 <code>agent-default-model</code> 与 <code>llm-pi-ai.providers[].models[].id</code>——注释：避免内置猜测出无效 provider id 导致 subagent 启动失败。</p>
+      </div></div>
+      <div class="row"><div class="rk">坑</div><div class="rv"><p><span class="ev ev-run">运行证据</span> 真实 23 个任务里需求最长 28 字、4 个空需求 → <b>长需求路径从未被真实触发</b>，只有 13 条单测背书。另有 1 个 <code>task.json</code> 带 UTF-8 BOM，朴素 <code>JSON.parse</code> 直接失败（写盘侧没有统一「无 BOM」约束）。</p></div></div>
+    </div>
+  </article>
+
+  <article class="feat">
+    <header>
+      <span class="fid">F06</span>
+      <div>
+        <h3>附件与文件入参：从「表单里选的文件」到「节点手里的绝对路径」</h3>
+        <p class="fmeta"><span class="tag">uploads.js</span> 157 行 · <span class="tag">attachments.js</span> 184 行 · <span class="tag">index.js</span> 1462-1519</p>
+      </div>
+    </header>
+    <div class="feat-body">
+      <div class="row"><div class="rk">两段式</div><div class="rv">
+        <p><b>暂存</b>（任务还不存在时）：<code>POST /uploads {name,dataBase64}</code> → <code>uploads/&lt;uploadId&gt;/&lt;safeName&gt;</code>，24h TTL。文件名先消毒：取 basename（<code>\</code> 和 <code>/</code> 都切）→ 去 <code>&lt;&gt;:"|?*</code> 与控制字符 → 去首尾空白/点 → 超 120 字符保留扩展名截断。<code>uploadId</code> 必须匹配 <code>^up-[a-z0-9]+-[a-z0-9]{8}$</code> 才允许拼路径。</p>
+        <p><b>物化</b>（启动前）：<code>copyFile</code> 到 <code>&lt;cwd&gt;/.knj-inputs/&lt;taskId&gt;/</code>，把绝对路径写进 <code>inputs.&lt;参数名&gt;</code> 或 <code>inputs.附件</code>，然后丢弃暂存。<b>为什么是 copy 不是 rename</b>：暂存常在 C 盘、工作区可能在别的盘，跨盘 rename 在 Windows 上 EXDEV 失败。</p>
+      </div></div>
+      <div class="row"><div class="rk">两种入参</div><div class="rv">
+        <ul>
+          <li><b>内置通用附件</b>（无需声明）：固定键 <code>inputs.附件</code> = <b>换行拼接的绝对路径串</b>，最多 20 个；节点 prompt 写 <code>${inputs.附件}</code> 自己解析</li>
+          <li><b>声明式文件入参</b>：工作流里声明 <code>{name,label,required,type:'file'}</code>，满足方式二选一——上传（<code>fileInputs</code>）或<b>只给路径</b>（<code>inputs.&lt;name&gt;</code>，相对路径按 <code>task.cwd</code> 解析成绝对路径并 <code>stat</code> 校验存在）</li>
+        </ul>
+        <p>节点只拿到路径，<b>不注入文件内容</b>，也不塞进需求描述——文档解析由节点自己写 prompt 完成。</p>
+      </div></div>
+      <div class="row"><div class="rk">最巧一手</div><div class="rv">
+        <p>同名文件冲突时如何区分「我上次跑留下的」和「用户这次新选的同名文件」？<code>.knj-materialized-names.json</code> 记录本任务物化过的名字：是自己的旧文件 → <b>覆盖</b>（否则每次运行堆出 <code>2-x</code>、<code>3-x</code>）；是用户新选的同名文件 → <b>加序号</b>（<code>2-名字.ext</code>），绝不覆盖。失败时把本次写入的文件全删，不留半套材料。</p>
+      </div></div>
+      <div class="row"><div class="rk">失败语义</div><div class="rv">
+        <p><b>拒绝启动</b>，不静默少文件：暂存失效 → 报出文件名；必填入参缺失 → 400；路径指向的文件不存在 → 报参数名与解析后的路径。代码注释一句话概括原则：<b>「文件入参指向空比启动失败更糟」</b>。工作区还会自动写 <code>.knj-inputs/.gitignore</code>（内容 <code>*</code>），让用户上传的东西不进他的版本库。</p>
+      </div></div>
+      <div class="row"><div class="rk">验证</div><div class="rv"><p><code>assertInsideDir</code> 即使消毒被绕过也再校验目标真在目录内（<code>relative</code> + 绝对路径 + 盘符三重判断），并<b>特意导出给测试直接打靶</b>——注释说否则「护栏就是没人验证的死代码」。</p></div></div>
+    </div>
+  </article>
+
+  <article class="feat">
+    <header>
+      <span class="fid">F07</span>
+      <div>
+        <h3>编排执行：沙箱里那 410 行才是真正的「引擎」</h3>
+        <p class="fmeta"><span class="tag">orchestrator.js</span> 410 行 · 无 fs / 无 require / 无网络</p>
+      </div>
+    </header>
+    <div class="feat-body">
+      <div class="row"><div class="rk">沙箱约束</div><div class="rv">
+        <p>脚本以<b>源码字符串</b>交给 workflow 引擎，在隔离沙箱里跑；可用 API 只有 <code>agent(prompt,opts)</code>、<code>parallel(thunks)</code>、<code>phase(id)</code>、<code>log(msg)</code>、<code>args</code>。所以：图路由/条件/宽松相等/模板解析<b>全部内联复制</b>自 <code>graph.js</code>（注释「勿偏离」）；断点落盘不能自己写文件，只能 <code>log('[knj-checkpoint]'+JSON)</code> 上报让 Host 写。</p>
+      </div></div>
+      <div class="row"><div class="rk">主循环</div><div class="rv">
+        <p><code>executeUntil(nodeId, joinId)</code>（<code>:264-393</code>）：<code>start</code> 出发，按节点类型分派：</p>
+        <ul>
+          <li><b>task</b>：<code>skipSet</code> 命中则跳过（断点恢复）→ <code>countRun</code> 计数（超 <code>maxRuns</code> 抛错，默认 3）→ prehook → 拼 prompt（只自动加两段：<code>[人工意见]</code>、<code>[工作目录]</code>，其余靠显式 <code>${...}</code>）→ <code>agent()</code> → checkpoint → posthook</li>
+          <li><b>gateway-xor</b>：按 <code>when</code>「声明顺序最先命中」路由，<code>default</code> 兜底（<b>带条件的 default 也参与匹配</b>）</li>
+          <li><b>gateway-and split</b>：<code>findJoin</code> BFS 找第一个多入边 gateway-and → <code>parallel(分支)</code>；任一失败=整体失败；<b>分支内 human 暂停必须向上传播</b></li>
+          <li><b>human</b>：无决策则 <code>return {paused:true}</code></li>
+          <li><b>并行节点</b>：<code>body.mode==='parallel'</code> → 派 N 个 subagent 跑同一 prompt，结果合并为数组，各写 <code>&lt;node&gt;-i.json</code></li>
+        </ul>
+      </div></div>
+      <div class="row"><div class="rk">引用解析</div><div class="rv">
+        <p><code>resolveRefs</code> 正则 <code>/\$\{(?:ctx\.)?([^}]+)\}/g</code>；<code>resolveRefRaw</code> 按 <code>.</code> 逐段、<b>贪心最长 key 前缀匹配</b>（所以 <code>${inputs.附件}</code>、<code>${node.field}</code>、<code>${task.id}</code> 都能解析）。解析不到 → <b>空串</b>，避免把 <code>${...}</code> 原文漏进 prompt 污染模型输出。</p>
+        <p>条件比较用 <code>looseEq</code>：<code>true↔'true'</code>、<code>5↔'5'</code> 双向宽松 —— 因为 subagent 输出可能是字符串化的布尔/数字，而 UI 存的是另一种形态。</p>
+      </div></div>
+      <div class="row"><div class="rk">教义</div><div class="rv">
+        <p><b>失败即抛，绝不吞错</b>（<code>:395-397</code>）：脚本正常 <code>return</code> 会被引擎判 <code>stopReason=completed</code>，失败任务会被误标 success。所以节点无输出、并行全失败、安全步数（1000）触发循环都显式 <code>throw</code>。</p>
+        <p><code>file</code>/<code>dir</code> 是 UI 展示语义，不是 JSON Schema 类型 —— 传给 subagent 前<b>归一化为 <code>string</code></b>，否则 schema 校验直接失败。</p>
+      </div></div>
+    </div>
+  </article>
+
+  <article class="feat">
+    <header>
+      <span class="fid">F08</span>
+      <div>
+        <h3>断点、续跑、单阶段重跑：三个入口，三套清理策略</h3>
+        <p class="fmeta"><span class="tag">index.js</span> <code>/rerun-stage</code> 1886 · <code>/resume</code> 1943 · <code>monitorRun</code> 1305</p>
+      </div>
+    </header>
+    <div class="feat-body">
+      <div class="row"><div class="rk">断点怎么来</div><div class="rv">
+        <p>编排器每完成一个 task 节点就 <code>log('[knj-checkpoint]'+JSON)</code>；Host 的 <code>monitorRun</code> 监听 <code>workflow/log</code>，前缀匹配后 <code>JSON.parse</code> 并 <code>writeStage(taskId, nodeId, output)</code>。注释说得很直白：<b>「subagent 常不遵守写文件指令，不能依赖它」</b> —— 所以编排器 prompt 里那句「请把结果写到 stages/xxx.json」基本是噪声，真正落盘的是 Host。</p>
+      </div></div>
+      <div class="row"><div class="rk">resume</div><div class="rv">
+        <p>读 <code>stages/*.json</code> 组装 <code>initialResults</code>（同时成为 <code>skipSet</code>）。并行节点要识别 <code>-N</code> 后缀并校验<b>分片数完整且序号连续</b>（<code>parallelItems</code> 默认 3）。不清文件；<code>stageStates</code> 保留 done，把 skipped/failed 重置 pending 并清 sessionIds。</p>
+      </div></div>
+      <div class="row"><div class="rk">rerun-stage</div><div class="rv">
+        <p>只取<b>目标节点之前</b>的断点（stage 文件优先，回落 <code>results.json</code>），然后<b>删掉目标及之后</b>的 stage 文件（用正则 <code>^(.*)-(\d+)$</code> 去掉分片后缀）。这样重跑一个阶段不会把后面已完成的结果误当缓存。</p>
+      </div></div>
+      <div class="row"><div class="rk">rerun 全量</div><div class="rv"><p><code>POST /resume?mode=rerun</code>：<code>initialResults={}</code> + <b>删整个 stages 目录</b> + stageStates 全量重置。</p></div></div>
+      <div class="row"><div class="rk">坑</div><div class="rv">
+        <p><code>maxRuns</code> 是<b>按单次 run 计数</b>，resume 后清零 → 反复点「继续」可以无限重试，死循环保护只在单 run 内成立。真实数据里确实靠这个绕过过一次（<code>fix</code> 跑 4 次触发熔断后任务被 cancel）。</p>
+      </div></div>
+    </div>
+  </article>
+
+  <article class="feat">
+    <header>
+      <span class="fid">F09</span>
+      <div>
+        <h3>人工审批：为什么需要「决策重放」三件套</h3>
+        <p class="fmeta"><span class="tag">index.js</span> <code>/decide</code> 2030-2100 · <span class="tag">orchestrator.js</span> 34-44 / 361-382</p>
+      </div>
+    </header>
+    <div class="feat-body">
+      <div class="row"><div class="rk">用户侧</div><div class="rv">
+        <p>跑到 <code>human</code> 节点 → 任务进 <code>waiting-human</code>，详情里出现审批卡（展示 <code>displayFrom</code> 指定节点的产物，可预览 md/文件）→ 按钮文字<b>是流程里配的</b>（<code>routes[{label,tone}]</code>，可多条），可填意见 → 决策后意见注入下游节点 prompt。</p>
+      </div></div>
+      <div class="row"><div class="rk">Host 侧</div><div class="rv">
+        <p><code>POST /decide {decision, feedback?}</code>：校验 <code>status===waiting-human</code> → 兼容旧值 <code>approve→通过 / reject→驳回</code> → 把历史决策做成 <code>decided = buildDecidedMap(task)</code>（每个 human 取最后一条）→ 追加 <code>decisions[]</code> → <code>startTask({decision, decided, initialResults: humanState.results})</code>。遇 409 会<b>回滚</b>：恢复 <code>humanState</code>、<code>status=waiting-human</code>、删掉刚追加但没被消费的决策。</p>
+      </div></div>
+      <div class="row"><div class="rk">三件套</div><div class="rv">
+        <p>这是全项目最微妙的 20 行。<b>问题</b>：人工节点暂停后，<code>decide</code> 会重新走图；如果图里有<b>两个顺序人工节点</b>，或者<b>驳回→修复→又回到同一个人工节点</b>，历史决策会被反复重放，导致 fix/submit 空转到 <code>maxRuns</code> 超限，人工节点永远不再触发（真实任务 <code>task-mttp8q71</code> / <code>task-mttz5ok7</code> 现场）。<b>解法</b>：</p>
+        <ul>
+          <li><code>decidedMap</code>：已审批过的 human 直接走最后去向，<b>不再暂停</b></li>
+          <li><code>humanReleased</code>：每个 human 在<b>单次 walk 内只自动放行一次</b> —— 去向若把流程带回同一个 human（驳回回环），第二次到达 = 新一轮审批，必须暂停</li>
+          <li><code>skipSet.delete(route.to)</code>：去向目标必须重新执行（接受人工意见），不能被断点跳过</li>
+        </ul>
+      </div></div>
+      <div class="row"><div class="rk">验证</div><div class="rv"><p><span class="ev ev-run">运行证据</span> <code>repro-ts-review-loop.mjs</code> 实跑 exit 0：驳回后 <code>fix</code>/<code>submit</code> 各跑 1 次并<b>重新暂停在同一 human</b> —— 这三件套确实生效了。另有 <code>repro-decide-order.test.js</code> 守住「409 时不得改状态」。</p></div></div>
+    </div>
+  </article>
+
+  <article class="feat">
+    <header>
+      <span class="fid">F10</span>
+      <div>
+        <h3>进度呈现：3 秒轮询 + 事件驱动的阶段状态，以及一个没用文档写的「运行效果图」</h3>
+        <p class="fmeta"><span class="tag">client.js</span> <code>WorkbenchView</code> 3114 · <code>KanbanView</code> 2963 · <code>renderRunCanvas</code> 3666</p>
+      </div>
+    </header>
+    <div class="feat-body">
+      <div class="row"><div class="rk">轮询</div><div class="rv">
+        <p>看板挂载后每 <b>3000ms</b> 并发拉三件事：<code>/tasks</code>、<code>/workflows</code>、<code>/tasks?archived=1</code>。关闭看板时<b>真正 unmount</b>（不是 <code>display:none</code>）—— 注释批评过旧实现「隐藏面板仍每 3s 打请求」。搜索框 300ms 防抖，走 Host 侧全文查询（列表项不带正文，客户端无法自行匹配）。</p>
+      </div></div>
+      <div class="row"><div class="rk">阶段状态</div><div class="rv">
+        <p>进度百分比 <code>progressPct</code>：<code>success</code> 直接 100；否则 <code>done / 非 skipped 阶段数</code>。三套状态元数据并存：任务级 <code>STATUS_META</code>（6 态）、阶段级 <code>STAGE_META</code>（5 态）、运行图 <code>RUN_STATUS</code>（7 态含 <code>waiting/passed</code>）。</p>
+        <p>看板 5 列 = 待执行 / 运行中 / 待人工处理 / 成功 / 失败·已取消；详情里有<b>横向步骤条</b>（注：横向步骤条组件其实在已死的 <code>TaskDetail</code> 里，当前详情用的是节点卡片 + 运行效果图）。</p>
+      </div></div>
+      <div class="row"><div class="rk">事件驱动</div><div class="rv">
+        <p>Host 侧 <code>monitorRun</code> 把 <code>workflow/phase</code>（当前阶段）、<code>workflow/agent-start</code>（追加 <code>sessionIds</code>）、<code>workflow/agent-end</code>（标 done）翻译成 <code>stageStates</code> 增量并落库，前端下次轮询就能看到。<b>一个坑</b>：多轮复用同一节点时，上一轮的 done 会挡住新状态 —— 所以 <code>agent-start</code> 会<b>强制置回 running</b>（清 finishedAt/error、刷新 startedAt），<code>monitor-stage-status.test.js</code> 守的就是这条。</p>
+      </div></div>
+      <div class="row"><div class="rk">未文档化的亮点</div><div class="rv">
+        <p><b>运行效果图</b>（<code>renderRunCanvas</code> 3666-3774）：把这张图在运行时的状态画出来——节点按状态着色、可切换「流程图 / 列表」、点节点看该阶段产物、可缩放/自适应宽度。README 完全没提，但这是「看懂一次运行」最直观的界面。</p>
+      </div></div>
+      <div class="row"><div class="rk">坑</div><div class="rv"><p>状态机跨三层（Host 真源 <code>finalizeTask</code>+<code>monitorRun</code>、图推导 <code>graph.deriveRunGraphStates</code>、UI 的 3 处状态表 + 1 份镜像推导）。只改一层必然出现「后台 success、界面 running」。</p></div></div>
+    </div>
+  </article>
+
+  <article class="feat">
+    <header>
+      <span class="fid">F11</span>
+      <div>
+        <h3>命令平面与定时调度：两个「可选接口」</h3>
+        <p class="fmeta"><span class="tag">index.js</span> <code>registerCommands</code> 2228-2302 · <code>createKnjWorkflowSchedulerService</code> 407-536</p>
+      </div>
+    </header>
+    <div class="feat-body">
+      <div class="row"><div class="rk">斜杠命令</div><div class="rv">
+        <p>设计意图很好：<code>/dev-task new &lt;标题&gt; / list / status &lt;id&gt; / wf</code> 走<b>命令平面</b>，「结果不进模型上下文」。实现用 <code>ctx.effect(() =&gt; commands.register({name,description,execute}))</code> —— 用 <code>ctx.effect</code> 持 disposer 是为了插件卸载/HMR 时注销，否则旧 handler 常驻命令表（引用已卸载的 store，执行即幽灵副作用）。</p>
+      </div></div>
+      <div class="row"><div class="rk">调度服务</div><div class="rv">
+        <p><code>ctx.provide('knjWorkflowScheduler', {listWorkflows, createAndStartScheduledTask})</code>；<code>dsh-scheduler</code> 侧按<b>字符串服务名</b>取用（<code>executionKind === 'knj-workflow'</code>），并额外要求插件提供 <code>stageAttachments</code>（缺失时调度器提示「请更新该插件后重启」）。<b>没有共享类型/版本校验</b>，所以升级必须两边一起。</p>
+        <p>调度路径的两个特殊设计：<b>不预存 <code>workflowSnapshot</code></b>（触发时用最新定义）→ 所以 <code>startTask</code> 里刻意回写快照，否则详情页「无流程图」、到人工节点时 <code>humanRoutes(undefined)</code> 抛错整页空白；<b><code>attachmentsAreReusable</code></b> 让附件物化后不丢暂存，因为定时任务每次触发都要重新物化。</p>
+      </div></div>
+      <div class="row"><div class="rk">坑（严重）</div><div class="rv">
+        <p><span class="ev ev-run">运行证据</span> <code>/dev-task</code> 命令在 DSH 0.2.1 上<b>注册失败</b> <span class="tag t">已修复 2026-10-24</span>：宿主 <code>CommandDefinition</code> 要求 <code>handler</code> 必填，插件传的是 <code>execute</code>，宿主直接抛 <code>TypeError: command "dev-task" handler must be a function</code>。cordis 的 <code>effect()</code> 会同步重抛 → 该错误从 <code>store.init().then</code> 冒到 <code>.catch</code>，日志出现 <code>init failed</code>；<b>但 HTTP API 仍正常</b>（<code>registerRoutes</code> 在它之前执行）。这就是「代码里写着、菜单里没有」的功能。</p>
+      </div></div>
+    </div>
+  </article>
+
+  <article class="feat">
+    <header>
+      <span class="fid">F12</span>
+      <div>
+        <h3>并发、取消与卸载：不死锁、不漏 run、不烧钱</h3>
+        <p class="fmeta"><span class="tag">index.js</span> <code>runs</code> Map 590 · <code>cancelTask</code> 1379 · <code>apply</code> 2319-2322</p>
+      </div>
+    </header>
+    <div class="feat-body">
+      <div class="row"><div class="rk">并发守卫</div><div class="rv">
+        <p>三层：路由预检 <code>isRunning()</code> → <code>startTask</code> 内<b>同步占位</b>（在任何 await 之前 <code>runs.set</code>）→ 抛 <code>RunAlreadyActiveError</code> 由路由转 <b>409</b>。这堵住了「取消后立即续跑」把任务误标 failed 的窗口，也堵住双份 subagent 的 LLM 成本。</p>
+      </div></div>
+      <div class="row"><div class="rk">生命周期</div><div class="rv">
+        <p><code>run.result</code> 落定后：校验 <code>runs.get(taskId) === run</code>（旧 run 晚到不得覆盖）→ <code>finalizeTask</code> → <b>四个监听器各自独立 try/catch 地 off</b>（一个抛错不能让 runs 残留）→ <code>runs.delete</code> → <code>run.dispose()</code> → <code>parentHandle.dispose()</code>。</p>
+        <p>卸载时 <code>ctx.effect(() =&gt; () =&gt; { disposed = true; bridge?.cancelAll(); })</code>：<b>取消全部活跃 run</b>（否则插件卸载后 subagent 群继续烧 LLM 成本），并用 <code>disposed</code> 标记让晚到的 <code>init()</code> 不再注册路由/命令（注册在已卸载 ctx 上会泄漏成僵尸 handler）。</p>
+      </div></div>
+      <div class="row"><div class="rk">取消</div><div class="rv"><p><code>/cancel</code> 先把 <code>status=cancelled</code> + <code>finishedAt</code> 落库，再调 <code>run.cancel()</code>；<code>DELETE /tasks/:id</code> 先 cancel 再删目录，且 <code>finalizeTask</code> 用 <code>getTask</code> 为空提前返回，避免重建孤儿结果。</p></div></div>
+      <div class="row"><div class="rk">坑</div><div class="rv"><p><code>finalizeTask</code> 的 paused 分支<b>保留旧 error 不清</b>；cancel 分支把 running 阶段标成 done（有意为之，但 cancelled 任务在详情里看起来「都完成了」）。</p></div></div>
+    </div>
+  </article>
+</section>

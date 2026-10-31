@@ -1,0 +1,12 @@
+﻿== run1（首次执行）==
+  paused: true  pausedAt: human-mttoi2zi  ok: true
+  agentCalls: ["dev","submit"]
+  counts: {"fix":0,"submit":1,"dev":1}
+
+== run2（驳回决策，期望 fix 跑一次 + submit 重跑一次后再次 paused@human）==
+  paused: true  pausedAt: human-mttoi2zi  ok: true
+  error: (无)
+  agentCalls: ["fix","submit"]
+  counts: {"fix":1,"submit":1,"dev":0}
+
+结论: 符合预期：驳回后 fix+submit 一轮 → 重新暂停等人工（可再通过/驳回）

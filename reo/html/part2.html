@@ -1,0 +1,194 @@
+<div class="wrap">
+
+<section id="s-00">
+  <div class="sec-head">
+    <div class="sec-num">00</div>
+    <div>
+      <h2>方法与证据边界</h2>
+      <p class="sec-sub">先说清楚「这份报告怎么得出结论」，再谈结论。REA 提供的是静态事实，运行证据来自本机真实数据与实跑测试，两者严格分开。</p>
+    </div>
+  </div>
+
+  <h3><span class="h3n">0.1</span>被分析的对象，先对齐身份</h3>
+  <p>本机存在三份「同一个插件」：工作区源码、发布 tarball、profile 里的安装副本。三者的 SHA-256 逐文件对账结果一致，所以后面的行号对<b>任何一份</b>都成立 <span class="ev ev-run">运行证据</span>。</p>
+  <table>
+    <thead><tr><th>对象</th><th>位置</th><th>版本 / 规模</th><th>对账结论</th></tr></thead>
+    <tbody>
+      <tr><td>工作区源码</td><td class="mono">D:\dsh-knj\dsh-knj-workflow</td><td>v2026.10.218 · <code>lib/</code> 37 文件</td><td>基准</td></tr>
+      <tr><td>发布包</td><td class="mono">dsh-knj-workflow-2026.10.218.tgz</td><td>40 条目 · 251,321 B</td><td>与工作区 <b>40/40 文件哈希相同</b></td></tr>
+      <tr><td>安装副本</td><td class="mono">~\.dsh\profiles\web\node_modules\dsh-knj-workflow</td><td>v2026.10.218</td><td>与工作区 <b>37/37 + 3 根文件相同</b></td></tr>
+      <tr><td>宿主</td><td class="mono">@deepseek-ai/dsh</td><td>0.2.1-rc.2</td><td>落在 peer 窗口 <code>&gt;=0.1.1-rc.2 &lt;0.3.0-0</code> 内</td></tr>
+    </tbody>
+  </table>
+  <p class="muted" style="font-size:13px">也就是说：<b>没有「工作区领先于线上」的漂移</b>，读这份源码就是读用户真正在跑的东西。这一点很关键，因为本项目的 git 历史与发布版本并不同步（见 <a href="#s-04" style="color:var(--accent)">04 开发视角</a>）。</p>
+
+  <h3><span class="h3n">0.2</span>REA 静态分析：跑了什么、拿到什么、不能证明什么</h3>
+  <p>用 REA（Reverse Engineering Anything）的 JavaScript application 分析器对 <code>lib/</code> 整棵树做了只读静态分析：把 37 个文件按 AST 解析成模块与调用图。<b>没有执行任何代码</b>——这是静态分析的定义边界，不是缺陷。</p>
+  <table>
+    <thead><tr><th>Evidence 字段</th><th>值</th></tr></thead>
+    <tbody>
+      <tr><td>evidence_id</td><td class="mono" style="word-break:break-all">ev_4c2acb4201a52a2e6a1c15dc797695ac98afaad5b0689c8687b36092ba2aa3ac</td></tr>
+      <tr><td>operation / provider</td><td class="mono">analyze_javascript_application · rea-javascript-application v1</td></tr>
+      <tr><td>authority / confidence</td><td><span class="tag t">shipped-artifact</span> <span class="tag">derived</span></td></tr>
+      <tr><td>主体 SHA-256</td><td class="mono" style="word-break:break-all">f8d03bee2e66c47b1bcf00667660cb6661ee7d1b9d6a3eb492da0790317b6f45</td></tr>
+      <tr><td>解析规模</td><td><b>37</b> 个 JS 文件 · <b>881,498 B</b> 文本 · <b>118,203</b> 个 AST 节点 · 0 解析失败 · 0 非法 UTF-8</td></tr>
+      <tr><td>结构图</td><td><b>362</b> 节点 / <b>540</b> 边（coverage: partial）</td></tr>
+      <tr><td>语义图</td><td><b>66,498</b> 节点 / <b>68,290</b> 关系；call-flow 家族保留 4,337 条、boundary 127 条</td></tr>
+      <tr><td>裁剪</td><td>semantic_graph <b>truncated</b>（触达 20,000 文件节点 / 100,000 节点上限）→ 关系覆盖是「已解析范围内完整」，不是全库完备</td></tr>
+    </tbody>
+  </table>
+  <div class="callout g">
+    <span class="ct">REA 的六条 limitation（原文保留，不做美化）</span>
+    <p style="font-size:12.5px;line-height:1.6">
+      ① CommonJS/ESM 绑定关系只从惰性语法恢复，且只在已清点容器内解析；② 图覆盖不完整，缺失事实保持显式，不得读作「不存在」；③ JS/HTML 被当作惰性文本解析，<b>bundle 引导代码从未执行</b>；④ 静态 import / 入口 / worker / 端点 / 存储关系不证明运行时执行；⑤ 表达式动态或混淆时静态路径可能无法解析；⑥ Webpack/Rspack factory 只从 AST 字面量恢复，未调用 push handler 或引导代码。
+    </p>
+    <p style="font-size:12.5px;margin-top:6px">因此本报告里的「运行时行为」一律另有出处：<b>本机真实数据</b>、<b>实跑测试</b>、<b>宿主包类型定义</b>。凡是只靠静态推断的，都打了 <span class="ev ev-inf">推断</span>。</p>
+  </div>
+
+  <h3><span class="h3n">0.3</span>三类证据，严格分开</h3>
+  <div class="grid2">
+    <div class="panel">
+      <h4>① 静态源码实证 <span class="ev ev-src">源码</span></h4>
+      <p class="muted" style="font-size:13px;margin:0">读 <code>lib/*.js</code> 与宿主 <code>@deepseek-ai/dsh-*</code> 的类型定义。所有 <code>文件:行号</code> 都是实际读到的位置，不用「大概在」。</p>
+    </div>
+    <div class="panel">
+      <h4>② 运行证据 <span class="ev ev-run">运行</span></h4>
+      <p class="muted" style="font-size:13px;margin:0">本机数据根 <code>~\.dsh\dev-orchestrator</code>（8 工作流 / 23 任务 / 3.2MB 诊断日志）+ 实跑 <code>node --test</code>（389/389 绿）+ 真实 HTTP 请求痕迹。</p>
+    </div>
+    <div class="panel">
+      <h4>③ 宿主契约核对 <span class="ev ev-src">源码</span></h4>
+      <p class="muted" style="font-size:13px;margin:0">拿插件调用点去比对宿主真实的 <code>webServer / workflowEngine / agents / commands / agentPresets</code> 定义 —— 这是发现「插件写着但实际不工作」的唯一办法。</p>
+    </div>
+  </div>
+
+  <div class="callout t">
+    <span class="ct">这份报告的三个「不」</span>
+    <p><b>不</b>复述 README：README 有 4 处与实现对不上（API 表漏 8 条、编排器参数整节失效、架构图落盘归属写错、配置项漏项），报告以代码为准并标出漂移。</p>
+    <p><b>不</b>把测试噪音当用户痛点：3.25MB 日志里只有 <b>4.9%</b> 的行属于真实任务，其余来自测试夹具 taskId（551 个不同 taskId 混在一起）。</p>
+    <p><b>不</b>假装完整：无法验证的（npm 线上状态、宿主 root ctx 事件可见性、scheduler 真实契约）进 <a href="#s-05" style="color:var(--teal)">05 风险与未知</a>。</p>
+  </div>
+
+  <div class="callout">
+    <span class="ct">复核记录 · 2026-10-24 22:45</span>
+    <p style="font-size:13px">定稿后做了一次独立复验：<b><code>lib/</code> 37 个文件与已安装副本 SHA-256 全部相同 → 插件代码零变更</b>，因此所有代码级结论（插件契约、24 条路由、状态机、<code>/dev-task</code> 注册契约不兼容、图校验放行零出边、客户端硬编码前缀、日志无轮转等）逐条重查后<b>仍然成立</b>。数据侧按最新快照刷新了数字（日志 3.25 MB / 25,842 行、assist 433 次、归档 1 次），并修正初版两处口径：README 的 API 表实际是 <b>11 行覆盖 16 条</b>（不是 12 条）、真实需求最长 <b>28 字</b>（不是 5 字）。复核脚本：<code>reo/verify/verify.mjs</code>、<code>verify2.mjs</code>。</p>
+  </div>
+
+  <div class="callout g" id="fix-log">
+    <span class="ct">修复记录 · 2026-10-24 23:20（定稿后落地）</span>
+    <p style="font-size:13px">按确认范围落了三条修复，每条都先写红测试再改实现；全量套件 <b>407/407 绿</b>（原 389 + 新增 18），<code>git</code> 里未提交的仍是原有那批改动 + 本次新增。</p>
+    <ul style="font-size:13px;margin:6px 0 4px">
+      <li><b>① /dev-task 命令契约</b>：<code>lib/index.js</code> 同时提供 <code>handler(invocation)</code>（0.2.x，返回 <code>{kind,text}</code>）与 <code>execute(line)</code>（0.1.x，返回 <code>{success,text}</code>），注册不再抛 <code>TypeError</code>。测试：<code>lib/commands-contract.test.js</code>（8 例，内含两代宿主的校验器与源码守卫）。</li>
+      <li><b>② 前缀发现</b>：Host 新增固定只读端点 <code>GET /knj-workflow/meta</code> → <code>{plugin,prefix}</code>（注册在前缀路由之后，不抢占 <code>registrations[0]</code>；旧宿主不支持 <code>exact</code> 路由时降级且不影响插件）；客户端 <code>resolvePrefix</code> 启动探测一次并缓存，404/异常/非法值回退 <code>/devtask</code>。测试：<code>lib/prefix-discovery.test.js</code>（6 例）。</li>
+      <li><b>③ JSON 损坏隔离</b>：<code>readJson</code> 解析失败时把原文件改名为 <code>&lt;name&gt;.corrupt-&lt;ts&gt;</code> 并记诊断日志，不再静默 fallback 后被默认流水线覆盖；同时剥离 UTF-8 BOM（真实数据里 1 个 <code>task.json</code> 因此静默消失）。测试：<code>lib/store-resilience.test.js</code>（4 例）。</li>
+    </ul>
+    <p style="font-size:13px;margin:6px 0 0">同步更新 <code>README.md</code>：API 表补齐到 24 条 + 发现端点说明、编排器参数改为实际消费的 <code>args</code>、配置表补 <code>orchestratorScript</code> 与前缀自发现说明。</p>
+    <p style="font-size:13px;margin:6px 0 0"><b>发布与运行验证（2026-10-24 23:49）</b>：已按 <code>2026.10.219</code> 打包并装进 web profile（工作区 ↔ 安装副本 37/37 文件哈希一致），重启后线上实例：<code>/knj-workflow/meta</code> 返回真实前缀、<code>/devtask/health</code> 正常、<code>uploads/</code> 过期暂存被清理（证明 init 完整跑过命令注册）。另有隔离进程运行时演练 <code>reo/verify/integration-drill.mjs</code> <b>9/9 通过</b>：自定义前缀 <code>/knj-api</code> 下发现端点与业务路由同时生效、旧前缀确实 404、已安装 client 的 <code>resolvePrefix</code> 跨 HTTP 读到 <code>/knj-api</code>、无端点时回退 <code>/devtask</code>、损坏 JSON 隔离 + BOM 可读 + 二次 init 幂等。<b>仍未做</b>：真实 profile 的 <code>httpPrefix</code> 改写演练（需再重启一次，影响当前会话）。</p>
+  </div>
+</section>
+
+<section id="s-01">
+  <div class="sec-head">
+    <div class="sec-num">01</div>
+    <div>
+      <h2>产品视角：它到底是什么</h2>
+      <p class="sec-sub">不是「一个插件」，是「一张可复用的 AI 研发流水线」：把多轮人机协作固化成图，按图跑任务，关键节点停下等人拍板。</p>
+    </div>
+  </div>
+
+  <h3><span class="h3n">1.1</span>定位 · 用户 · JTBD</h3>
+  <div class="panel" style="border-left:3px solid var(--accent)">
+    <p style="margin:0;font-size:15px"><b>一句话：</b>面向「自己就是使用者」的开发者的可视化 AI 研发流水线。你画一张「需求分析 → 复杂度判断 →(设计) → 编码 → 验证 → 人工评审」的图，每个节点跑一个 subagent，人工节点停下来让你点通过/驳回，失败只重跑那一阶段。</p>
+  </div>
+  <div class="grid2">
+    <div class="panel">
+      <h4>目标用户 <span class="ev ev-run">运行</span></h4>
+      <ul style="font-size:13px;margin-bottom:0">
+        <li><b>单人 / 独立开发者</b>：本机唯一使用者，24 个任务分布在 4 个 cwd（<code>D:\workspace\iobs_pro</code> 12 个、本仓库 5 个）</li>
+        <li><b>已重度使用 DSH 的人</b>：profile 装了 30+ 插件、28 个 bundle</li>
+        <li><b>「元工作」从业者</b>：愿意为一个流程迭代 17 个版本（旗舰工作流 <code>revision: 17</code>）</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h4>四个 JTBD</h4>
+      <ol style="font-size:13px;margin-bottom:0">
+        <li>把「要 5 段提示词 + 手动搬运上轮产物」的活变成点一次按钮</li>
+        <li>关键节点停下来把关（13 条真实决策记录）</li>
+        <li>失败了别从头再来（阶段断点 + 单阶段重跑）</li>
+        <li>同一套流程反复用、还要能改（模板导入导出 + 画布 + 自然语言改图）</li>
+      </ol>
+    </div>
+  </div>
+
+  <h3><span class="h3n">1.2</span>界面真身：截图读出来的信息架构</h3>
+  <p>仓库里有三张界面截图（<code>assets/screenshots/</code>）。逐张读控件，比读 README 可信。但要注意：<b>这三张是 2026-08-28 的老版本 UI</b>，与当前代码已有三处可见漂移（下面会标）。</p>
+  <div class="shots">
+    <figure class="shot">
+      <img alt="工作流图编辑器截图" src="__SHOT_EDITOR__">
+      <figcaption><b>workflow-editor.png</b> · 工具条（名称/ID/锁定/缩放/全屏/自动布局/撤销重做/配置说明/保存）+ 左侧 4 种节点调色板 + 网格画布（拖拽连线、点选编辑）+ 右侧属性检查器空态即教学。</figcaption>
+    </figure>
+    <figure class="shot">
+      <img alt="新建任务弹窗截图" src="__SHOT_MODAL__">
+      <figcaption><b>new-task-modal.png</b> · 需求描述（截图时期是<b>必填</b>）+ 标题输入框（<b>现已移除</b>）+ 用户故事编码 + 工作流下拉（显示「N 阶段」）+ 工作目录 + 执行模型（留空继承当前会话）。</figcaption>
+    </figure>
+  </div>
+  <div class="callout">
+    <span class="ct">截图的三处漂移 <span class="ev ev-src">源码</span></span>
+    <p style="font-size:13px">① 需求描述已改为<b>可选</b>（<code>client.js:2742</code>）；② 标题输入框<b>整块移除</b>，改由 Host 依需求自动派生（<code>client.js:2896</code>）；③ 弹窗新增<b>内置附件区</b>与文件入参。左侧栏入口文案也从「开发任务」改成「<b>流程设计</b>」（<code>client.js:3284</code>），面板从「右栏抽屉」改成<b>主区接管</b>。截图与 README 描述的是同一个已过去的版本。</p>
+  </div>
+  <p style="font-size:13px"><span class="ev ev-run">运行</span> 一个漂亮的旁证：截图里画布节点的坐标与真实 <code>workflows.json</code> 里 <code>wf-dev-flow</code> 的节点坐标<b>逐像素对应</b>（dx=200 / dy=48），说明这张图拍的就是本机这套真实工作流，不是合成素材。</p>
+
+  <h3><span class="h3n">1.3</span>功能地图：8 段用户旅程 ↔ 实现载体</h3>
+  <p>把「用户看到什么」与「代码在哪」对齐。载体缩写：<span class="tag">client</span> = <code>lib/client.js</code>（4,294 行）、<span class="tag">index</span> = <code>lib/index.js</code>（2,338 行）、<span class="tag">orch</span> = <code>lib/orchestrator.js</code>、<span class="tag">graph</span> = <code>lib/graph.js</code>。</p>
+  <table>
+    <thead><tr><th style="width:9%">旅程</th><th style="width:33%">用户可见行为</th><th>实现载体（含行号）</th></tr></thead>
+    <tbody>
+      <tr><td><b>① 配置流程</b></td><td>打开「流程设计」→ 工作流列表 → 画布拖节点/拉线/点选改配置 → 自动布局/撤销/全屏 → 保存</td><td><span class="tag">client</span> <code>GraphEditor</code> 1004-2396、撤销栈 1020-1086、自动布局 963<br><span class="tag">graph</span> <code>validateWorkflow</code> 124-247 + <code>NODE_TYPES</code> 16<br>路由 <code>GET/POST/PUT /devtask/workflows</code></td></tr>
+      <tr><td><b>② 建任务</b></td><td>填需求（可空）→ 标题自动生 → 选工作流/目录/模型 → 可选附件或文件入参 → 「创建并启动」</td><td><span class="tag">client</span> <code>NewTaskModal</code> 2505-2927<br><span class="tag">index</span> <code>POST /tasks</code> 1755<br><code>requirement.js</code> 阈值 8000 / <code>attachments.js</code> 上限 20 / <code>uploads.js</code> 32MB·24h</td></tr>
+      <tr><td><b>③ 跑任务</b></td><td>点完就能走开，任务自己往下跑</td><td><span class="tag">index</span> <code>WorkflowBridge.startTask</code> 1075 → <code>resolveWorkflowEngine</code> 553 → <code>engine.start</code> 1196<br><span class="tag">orch</span> 逐节点 <code>agent()</code> 275-339</td></tr>
+      <tr><td><b>④ 看进度</b></td><td>看板 5 列 / 表格两形态；卡片显示进度 %；详情有步骤条与「运行效果图」；3s 自刷新</td><td><span class="tag">client</span> <code>KanbanView</code> 2963-3018、轮询 3119、<code>progressPct</code> 2408、运行效果图 <code>renderRunCanvas</code> 3666<br>路由 <code>GET /tasks</code> 1734（支持 <code>?q=</code> 全文搜索）</td></tr>
+      <tr><td><b>⑤ 人工审批 / 重跑</b></td><td>跑到人工节点暂停，卡片进「待人工处理」；点通过/驳回并填意见；失败阶段单独重跑；可取消/归档</td><td><span class="tag">index</span> <code>POST /decide</code> 2030（<code>approve→通过</code> 兼容 2046）、<code>/resume</code> 1943、<code>/rerun-stage</code> 1886<br><span class="tag">orch</span> <code>human</code> 暂停 361-382 + 决策重放 371</td></tr>
+      <tr><td><b>⑥ 定时调度</b></td><td>在 <code>dsh-scheduler</code> 里选「KNJ 工作流」类型，按 Cron 触发，文件入参可只给路径</td><td><span class="tag">index</span> <code>createKnjWorkflowSchedulerService</code> 407 → <code>ctx.provide('knjWorkflowScheduler')</code> 2327；调度器侧按服务名调用</td></tr>
+      <tr><td><b>⑦ AI 改流程</b></td><td>底部对话坞说一句「在 coding 后加验证节点，通过走人工评审、失败回 coding」，画布实时改，整轮一次撤销</td><td><span class="tag">client</span> 对话坞 1405-1472 + 700ms 增量轮询 1302<br><span class="tag">index</span> <code>POST /assist</code>→202、<code>GET /assist/progress</code>；<code>assist-edits.js</code> 8 种动作 + 整批回滚</td></tr>
+      <tr><td><b>⑧ 周边</b></td><td><code>/dev-task new|list|status|wf</code>；模板 <code>.workflow.json</code> 导入导出（同 ID 冲突提示）；产物文件预览；跳转助手完整会话</td><td><span class="tag">index</span> 命令 2228-2302<br><span class="tag">client</span> 导入 <code>parseWorkflowFile</code> 189、导出 169、预览 3865</td></tr>
+    </tbody>
+  </table>
+
+  <h3><span class="h3n">1.4</span>真实使用证据：产品被用成了什么样</h3>
+  <p>数据来自本机数据根 <code>~\.dsh\dev-orchestrator</code>，全部逐文件解析（不是抽样）<span class="ev ev-run">运行</span>。</p>
+  <div class="stats" style="margin:18px 0">
+    <div class="stat"><span class="v">8</span><span class="k">自建工作流<br>共 54 个节点</span></div>
+    <div class="stat"><span class="v">23</span><span class="k">任务实例<br>（24 目录 / 1 空壳）</span></div>
+    <div class="stat"><span class="v">51</span><span class="k">被拉起的<br>subagent 会话</span></div>
+    <div class="stat"><span class="v">13</span><span class="k">人工决策<br>通过5/驳回6/不通过2</span></div>
+    <div class="stat"><span class="v">433</span><span class="k">AI 改流程请求<br>跨 9 个活跃日</span></div>
+    <div class="stat"><span class="v">4.9<small>%</small></span><span class="k">诊断日志里<br>真实任务占比</span></div>
+  </div>
+  <table>
+    <thead><tr><th>观测</th><th>数字</th><th>它证明了什么</th></tr></thead>
+    <tbody>
+      <tr><td>任务状态分布</td><td class="num">success 11 · failed 6 · waiting-human 4 · running 1 · cancelled 1</td><td>闭环真跑通，也真卡过；<code>waiting-human</code> 占 17% 说明人工审批是高频路径</td></tr>
+      <tr><td>阶段实例</td><td class="num">done 39 · skipped 18 · pending 13</td><td><code>skipped</code> 高说明 XOR 分支真在用（复杂度判断/验证判断两条分叉）</td></tr>
+      <tr><td>阶段重跑</td><td class="num">submit ×4 会话 / fix ×3 会话</td><td>断点重跑不是纸面功能，被真实用过</td></tr>
+      <tr><td>节点类型真实分布</td><td class="num">task 28 · start 8 · end 8 · gateway-xor 6 · human 4 · <b>gateway-and 0</b></td><td>并行网关在调色板里，但真实数据零使用 → 能力与需求错位</td></tr>
+      <tr><td>失败原因</td><td class="num">subagent 无有效输出 ×3 · 死循环熔断 ×1 · 引擎不可用 ×2</td><td>三类失败需要三种处置（重跑 / 改图 / 改环境），但 UI 只有一个 <code>failed</code> 状态</td></tr>
+      <tr><td>输入能力真实使用</td><td class="num">requirement.md 落盘 <b>0</b> 次 · 声明式文件入参 <b>0</b> 例 · 归档 <b>1</b> 次</td><td>主打的长需求/文件入参<b>从未被触发</b>，归档仅 1 次</td></tr>
+    </tbody>
+  </table>
+  <div class="callout g">
+    <span class="ct">最重要的诚实修正：这批数据是「开发者自测」</span>
+    <p style="font-size:13px">24 个任务的标题大量是 <code>test1/test2/测试/快速测试</code>，其中 5 个直接在本插件仓库里跑；真实需求最长只有 <b>28 个字</b>，中位数 2 个字。所以「用了 433 次 AI 改流程」是真的，但「长需求能撑住十万字」<b>只有单测背书，没有真实使用背书</b>。报告里所有频次结论都请带着这个前提读。</p>
+  </div>
+
+  <h3><span class="h3n">1.5</span>产品短板：文档、截图与 API 的三重漂移</h3>
+  <table>
+    <thead><tr><th style="width:22%">类别</th><th>具体问题</th></tr></thead>
+    <tbody>
+      <tr><td><b>文档断链</b></td><td>README 首句指向 <code>./DESIGN.md</code>（不存在）、<code>design/task-attachments.md</code>（不存在）；代码注释还引了 <code>docs/workflow-mechanics.md</code>、<code>WORKFLOW-DESIGN.md</code>、<code>design/new-task-requirement-input.md</code> —— <b>全都不在仓库</b>。整个设计依据只剩代码与注释。</td></tr>
+      <tr><td><b>API 文档只写一半</b></td><td>README 表 11 行、只覆盖 16 条，代码注册 <b>24 条</b>。漏掉的包括人工审批的核心写接口 <code>POST /tasks/:id/decide</code>、<code>GET /models</code>、<code>GET /diag</code>、<code>archive/restore</code>、<code>DELETE /tasks/:id</code>、<code>results</code>、<code>file</code>。</td></tr>
+      <tr><td><b>编排器参数整节失效</b></td><td>README「编排器参数」写 <code>args.config = {stages}</code> + <code>resumeFrom</code>/<code>rerunStage</code>；实际 <code>config</code> 是 <code>{nodes,edges}</code>，而 <code>resumeFrom</code>/<code>rerunStage</code> <b>编排器从未读取</b>（真正的断点协议是 <code>initialResults</code>+<code>skipSet</code>）。</td></tr>
+      <tr><td><b>架构图归属写错</b></td><td>README 说「每阶段子 agent 结果落盘」，实际是 <b>Host 监听 <code>[knj-checkpoint]</code> 日志后自己落盘</b>——因为「subagent 常不遵守写文件指令」，注释里写得很直白。</td></tr>
+      <tr><td><b>结构性边界</b></td><td>单机单租户、无鉴权、无 CORS（依赖 loopback + 同源）；与 agent preset 强绑定，<code>workflowEngine</code> 取不到就整条链路不可用（真实发生 2 次）；路径假设 Windows。</td></tr>
+    </tbody>
+  </table>
+  <p class="muted" style="font-size:13px">一个「没写进 README 的真功能」：任务详情的<b>「运行效果图」视图</b>（流程图 / 列表切换、SVG 画布、点节点看产物，<code>client.js:3666-3774</code>）——这是产品上相当亮眼的一块，文档里完全没有。</p>
+</section>
