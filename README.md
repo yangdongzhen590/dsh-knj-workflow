@@ -68,24 +68,35 @@ dsh plugin --profile web add dsh-knj-workflow
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `dataRoot` | `~/.dsh/dev-orchestrator` | 数据存储目录 |
-| `httpPrefix` | `/devtask` | HTTP API 前缀 |
+| `dataRoot` | `~/.dsh/dev-orchestrator` | 数据存储目录（含 `workflows.json`、`tasks/`、`uploads/`、`knj-host-debug.log`） |
+| `httpPrefix` | `/devtask` | HTTP API 前缀。**改了不用动前端**：客户端启动时向固定端点 `GET /knj-workflow/meta` 询问真实前缀（旧宿主无此端点时回退 `/devtask`） |
+| `orchestratorScript` | 空 | 编排脚本**源码文本**（不是路径）；留空则读取 `lib/orchestrator.js` |
 
 ## HTTP API
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/devtask/health` | 健康检查 |
-| GET/POST/PUT | `/devtask/workflows` | 工作流列表 / 保存 |
+| GET | `/devtask/health` | 健康检查（回 `{ ok, plugin, dataRoot }`） |
+| GET | `/devtask/models` | 可用 provider/model 列表（直接解析 `~/.dsh/settings.yaml`，供新建任务下拉） |
+| GET | `/devtask/diag` | 诊断：`workflowEngine` 在各层 agent scope 的可见性（排障用） |
+| GET/POST/PUT | `/devtask/workflows` | 工作流列表 / 保存（POST 与 PUT 同为 upsert） |
 | DELETE | `/devtask/workflows/:id` | 删除工作流 |
 | GET/POST | `/devtask/tasks` | 任务列表 / 创建（绑定工作流并启动）· GET 支持 `?archived=1` 与 `?q=<关键词>`（Host 侧按标题/需求正文/工作流 id 全文过滤；列表项不含需求正文，只给 `descriptionChars`）· POST 可带 `fileInputs: { <参数名>: { uploadId, name } }`（必填文件入参缺失 → 400） |
 | GET | `/devtask/tasks/:id` | 任务详情（含阶段状态与需求描述全文） |
-| POST | `/devtask/uploads` | 文件入参上传暂存：`{ name, dataBase64 }` → `{ uploadId, name, size }`；文件名先消毒成 basename（不可用 → `invalid-name`），单文件上限 32MB（`file-too-large`），失败 400 + `{ error, code }` |
-| POST | `/devtask/tasks/:id/start` `/cancel` `/resume` | 启动 / 取消 / 继续 |
-| POST | `/devtask/tasks/:id/rerun-stage` | 重跑指定阶段 |
+| DELETE | `/devtask/tasks/:id` | 删除任务（先取消运行中的 run，再删目录） |
+| POST | `/devtask/tasks/:id/start` `/cancel` `/resume` | 启动 / 取消 / 继续（`/resume` 可带 `{ mode: 'resume' \| 'rerun' }`） |
+| POST | `/devtask/tasks/:id/rerun-stage` | 重跑指定阶段（`{ stageId }`） |
+| POST | `/devtask/tasks/:id/decide` | **人工审批**：`{ decision, feedback? }`；`decision` 必须是该节点配置的去向 label（兼容旧值 `approve`/`reject`），仅 `waiting-human` 状态可调用 |
+| POST | `/devtask/tasks/:id/archive` `/restore` | 归档 / 恢复（写 / 删 `archivedAt`，不改变 `status`） |
 | GET | `/devtask/tasks/:id/stages/:stageId` | 阶段断点产物 |
+| GET | `/devtask/tasks/:id/results` | 终态节点输出汇总（`results.json`） |
+| GET | `/devtask/tasks/:id/file?path=<相对路径>` | 文件预览：限任务 `cwd` 内（`relative` + `realpath` 双重校验）；目录回 `entries`，>200KB 只回 `meta` |
+| POST | `/devtask/uploads` | 文件入参上传暂存：`{ name, dataBase64 }` → `{ uploadId, name, size }`；文件名先消毒成 basename（不可用 → `invalid-name`），单文件上限 32MB（`file-too-large`），失败 400 + `{ error, code }` |
 | POST | `/devtask/assist` | AI 助手对话：`{ workflow, message, history? }` → `202 { requestId }`（异步启动） |
 | GET | `/devtask/assist/progress?id=&since=` | 对话过程：`{ events[], stream{text,reasoning,tools,usage}, done, result? }` |
+
+> **前缀发现端点**（不在 `httpPrefix` 之下）：`GET /knj-workflow/meta` → `{ plugin, prefix }`，只读、只接受 GET。
+> 客户端 `lib/client.js` 启动时问一次并缓存；端点缺失（旧宿主）或探测失败时回退 `/devtask`。
 
 ## AI 助手对话配置
 
@@ -101,9 +112,15 @@ dsh plugin --profile web add dsh-knj-workflow
 
 ## 编排器参数
 
-- `args.config`：工作流定义（`{ name, description, stages: [...] }`）
-- `args.task`：任务元数据（`{ id, title, taskDir, inputDescription }`）——`inputDescription` 由 Host 预计算：
-  需求描述未超阈值时是全文，超阈值时是「前 6000 字 + 省略说明 + 完整需求文件路径」。
-  脚本沙箱内没有 `require`，**不要在脚本里重新实现这份阈值逻辑**（与 `lib/requirement.js` 会漂移）
-- `args.resumeFrom`：从某阶段继续（之前阶段读缓存）
-- `args.rerunStage`：只重跑某阶段（其余读缓存）
+编排器脚本（`lib/orchestrator.js`）在 workflow 引擎沙箱里执行：**没有 `require`/`fs`/网络**，所以图路由与引用解析都内联在脚本里。它实际消费的 `args`：
+
+- `args.config`：工作流定义（`{ id, name, inputs, nodes: [...], edges: [...] }`）——不是旧的 `stages` 数组
+- `args.task`：`{ id, title, taskDir, inputDescription, description?, storyCode?, cwd? }`
+  `inputDescription` 由 Host 预计算：需求未超阈值时是全文，超阈值时是「前 6000 字 + 省略说明 + 完整需求文件路径」。
+  沙箱内没有 `require`，**不要在脚本里重新实现这份阈值逻辑**（与 `lib/requirement.js` 会漂移）
+- `args.inputs`：入参映射。文件入参是**绝对路径**；内置附件固定键 `inputs.附件` = 换行拼接的路径串
+- `args.initialResults`：断点恢复用的节点输出（键 = 节点 id），同时决定跳过哪些节点
+- `args.decided`：已审批过的人工节点 → 最后一次去向 label（重走图时这些节点不再暂停）
+- `args.decision`：本轮人工决策 `{ humanId, value, feedback? }`（消费一次后置空）
+
+断点协议是 **`initialResults` + 跳过集合 + `decided`/`decision`**；`resumeFrom`/`rerunStage` 不是编排器读取的参数（Host 侧也用 `initialResults` 表达这两种语义）。

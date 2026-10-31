@@ -1,16 +1,16 @@
 # dsh-knj-workflow bundle patch
 #
-# Installed via:  dsh plugin --profile web add ./dsh-knj-workflow-0.1.0.tgz
-# This layer inserts the plugin row into the profile's cordis tree,
-# and re-enables the workflow engine rows that dsh-web-app disables
-# (workflow-worker-thread + tool-workflow), because this plugin drives
-# ctx.workflowEngine programmatically.
-# `dataRoot` and `httpPrefix` may be overridden by the user's profile
-# cordis.patch.yml (same id, later layer wins).
-- id: workflow-worker-thread
-  disabled: false
-- id: tool-workflow
-  disabled: false
+# Installed via:  dsh plugin --profile web add ./dsh-knj-workflow-2026.9.193.tgz
+# This layer inserts the plugin row into the profile's cordis tree.
+#
+# DSH 0.2.x 起不再需要（也不能）在宿主 realm 里点亮 workflow 引擎行：
+#   * `workflow-worker-thread` 这个行 id 在 0.2 已不存在（补丁会报 entry not found）；
+#   * `workflowEngine` 自 0.1.x rc.8 起就活在 agent-preset 的隔离 realm 里
+#     （见 lib/index.js 的 inject 注释），顶层强行 enable `tool-workflow`
+#     只会让它 pending（waiting for service: workflowEngine）。
+# 插件本身通过 WorkflowBridge.startTask 从「发起任务的 agent scope」惰性取引擎，
+# 所以这里只做插入，不再改任何宿主行。
+# `dataRoot` 和 `httpPrefix` 仍可由用户 profile 的 cordis.patch.yml 按同 id 覆盖（后层胜）。
 - insert:
     - id: knj-workflow
       name: dsh-knj-workflow
