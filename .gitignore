@@ -15,3 +15,8 @@ target/
 
 # local wiki scaffold (session knowledge, not plugin content)
 .wiki/
+
+# REA 逆向分析的一次性产物（会话输出，不是插件内容）
+reo/
+.doublecheck-report.md
+dsh-knj-workflow-REA-report.html

@@ -1,3 +1,0 @@
-DUPLICATE top-level-ish names in client.js:
-
-classes: Overlay@741 TasksView@782 TaskDetail@847 WorkflowsView@903 GraphEditor@1004 NewTaskModal@2505 KanbanView@2963 TableView@3050 WorkbenchView@3114 SidebarTasksTab@3367 SidebarWorkflowsTab@3451 SidebarTaskDetail@3531
